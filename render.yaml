@@ -1,19 +1,21 @@
 services:
   - type: worker
-    name: ultra-precision-bot
+    name: binance-bot
     env: python
-    region: frankfurt
-    plan: starter
-    buildCommand: "pip install -r requirements.txt"
-    startCommand: "python ultra_precision_realtime_bot_render_v2.py"
-    envVars:
-      - key: BINANCE_API_KEY
-        sync: false
-      - key: BINANCE_API_SECRET
-        sync: false
-      - key: MODEL_URL
-        sync: false
-      - key: DRY_RUN
-        value: "true"
-      - key: SYMBOL
-        value: "BTCUSDT"
+    buildCommand: |
+      apt-get update
+      apt-get install -y wget unzip
+      wget https://github.com/cloudflare/boringtun/releases/download/0.4.0/boringtun-linux-x86_64.zip -O bt.zip
+      unzip bt.zip
+      mv boringtun /usr/local/bin/
+      pip install -r requirements.txt
+    startCommand: |
+      export WG_QUICK_USERSPACE_IMPLEMENTATION=boringtun
+      cp wg0.conf /tmp/wg0.conf
+      cp wg-quick /usr/local/bin/wg-quick
+      chmod +x /usr/local/bin/wg-quick
+      wg-quick up wg0
+      echo "VPN connected. Checking IP..."
+      curl https://ifconfig.me
+      python ultra_precision_realtime_bot_render.py
+
