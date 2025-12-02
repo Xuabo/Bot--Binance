@@ -2,32 +2,41 @@ services:
   - type: worker
     name: binance-bot
     env: python
+
     buildCommand: |
       apt-get update
       apt-get install -y wget unzip
-      # Install boringtun (userspace WireGuard dataplane)
+
+      mkdir -p bin
+
+      # Install boringtun
       wget https://github.com/cloudflare/boringtun/releases/download/0.4.0/boringtun-linux-x86_64.zip -O bt.zip
       unzip bt.zip
-      mv boringtun /usr/local/bin/
-      
-      # Install wireguard-go (userspace WireGuard controller)
-      wget https://github.com/WireGuard/wireguard-go/releases/download/v0.0.20220316/wireguard-go-linux-amd64 -O /usr/local/bin/wireguard-go
-      chmod +x /usr/local/bin/wireguard-go
+      mv boringtun bin/boringtun
+      chmod +x bin/boringtun
+
+      # Install wireguard-go
+      wget https://github.com/WireGuard/wireguard-go/releases/download/v0.0.20220316/wireguard-go-linux-amd64 -O bin/wireguard-go
+      chmod +x bin/wireguard-go
 
       pip install -r requirements.txt
 
     startCommand: |
+      export PATH=$PATH:/opt/render/project/src/bin
       export WG_QUICK_USERSPACE_IMPLEMENTATION=boringtun
       export WG_QUICK_USE_WIREGUARD_GO=1
-      cp wg0.conf /tmp/wg0.conf
-      cp wg-quick /usr/local/bin/wg-quick
-      chmod +x /usr/local/bin/wg-quick
-      
+
+      mkdir -p /tmp/wg
+      cp wg0.conf /tmp/wg/wg0.conf
+
+      cp wg-quick bin/wg-quick
+      chmod +x bin/wg-quick
+
       echo "Starting WireGuard..."
-      wg-quick up wg0
-      
+      wg-quick up wg0 || (echo "WG FAILED"; exit 1)
+
       echo "VPN connected. Checking IP..."
       curl https://ifconfig.me
-      
+
       echo "Starting bot..."
       python ultra_precision_realtime_bot_render.py
