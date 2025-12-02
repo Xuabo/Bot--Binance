@@ -1,7 +1,6 @@
-numpy
+websocket-client
+python-binance
 pandas
+numpy
 joblib
 requests
-ta
-python-binance
-binance-futures-connector
