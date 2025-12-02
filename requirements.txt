@@ -1,0 +1,7 @@
+numpy
+pandas
+joblib
+requests
+ta
+python-binance
+binance-futures-connector
