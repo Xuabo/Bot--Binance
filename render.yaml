@@ -5,7 +5,7 @@ services:
     region: frankfurt
     plan: starter
     buildCommand: "pip install -r requirements.txt"
-    startCommand: "python ultra_precision_realtime_bot_render.py"
+    startCommand: "python ultra_precision_realtime_bot_render_v2.py"
     envVars:
       - key: BINANCE_API_KEY
         sync: false
@@ -13,3 +13,7 @@ services:
         sync: false
       - key: MODEL_URL
         sync: false
+      - key: DRY_RUN
+        value: "true"
+      - key: SYMBOL
+        value: "BTCUSDT"
