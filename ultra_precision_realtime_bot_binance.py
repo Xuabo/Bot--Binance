@@ -6,6 +6,7 @@
 #
 # WARNING: Test in DRY_RUN mode first (DRY_RUN = True)
 
+
 import os
 import json
 import time
@@ -21,6 +22,14 @@ import joblib
 from websocket import WebSocketApp
 from binance.client import Client
 
+# Carregar variáveis do .env
+from dotenv import load_dotenv
+load_dotenv("/home/ubuntu/binance-bot/.env")   # <- Caminho ABSOLUTO
+
+
+
+
+
 # -----------------------
 # USER CONFIG
 # -----------------------
@@ -28,7 +37,7 @@ API_KEY = os.getenv("BINANCE_KEY")
 API_SECRET = os.getenv("BINANCE_SECRET")
 SYMBOL = "BTCUSDT"                 # instrument to trade
 DRY_RUN = True                     # True => don't send live orders
-LEVERAGE = 5                       # futures leverage used to compute qty
+LEVERAGE = 10                       # futures leverage used to compute qty
 POSITION_SIDE_HEDGE = False        # If you need HEDGE mode, set True and adapt orders
 PROB_THRESHOLD = 0.60              # minimal model probability to act
 MODEL_FILE = "model.joblib"        # path to joblib model
@@ -484,3 +493,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
