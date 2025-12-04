@@ -3,14 +3,14 @@ Description=Ultra Precision Binance Bot
 After=network.target
 
 [Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/binance-bot
-Environment="PATH=/home/ubuntu/binance-bot/venv/bin:/usr/local/bin:/usr/bin"
-ExecStart=/home/ubuntu/binance-bot/venv/bin/python3 /home/ubuntu/binance-bot/ultra_precision_realtime_bot_binance.py
+User=opc
+WorkingDirectory=/home/opc/binance-bot
+Environment="PATH=/home/opc/binance-bot/venv/bin:/usr/local/bin:/usr/bin"
+ExecStart=/home/opc/binance-bot/venv/bin/python3 /home/opc/binance-bot/ultra_precision_realtime_bot_binance.py
 Restart=always
 RestartSec=5
-StandardOutput=append:/home/ubuntu/binance-bot/bot.log
-StandardError=append:/home/ubuntu/binance-bot/bot_error.log
+StandardOutput=append:/home/opc/binance-bot/bot.log
+StandardError=append:/home/opc/binance-bot/bot_error.log
 
 [Install]
 WantedBy=multi-user.target
