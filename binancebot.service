@@ -1,0 +1,21 @@
+[Unit]
+Description=Ultra Precision Binance Bot
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/binance-bot
+Environment="PYTHONUNBUFFERED=1"
+ExecStart=/home/ubuntu/binance-bot/venv/bin/python3 /home/ubuntu/binance-bot/ultra_precision_realtime_bot_binance.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/var/log/binancebot.log
+StandardError=append:/var/log/binancebot.log
+
+# Evita bloquear o arranque do servidor!!
+StartLimitInterval=200
+StartLimitBurst=10
+
+[Install]
+WantedBy=multi-user.target
