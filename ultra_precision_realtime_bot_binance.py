@@ -1,9 +1,8 @@
 # ultra_precision_realtime_bot_binance.py
 # Python 3.8+
-# Requires: python-binance, websocket-client, numpy, pandas, joblib
+# Requires: python-binance, websocket-client, numpy, pandas, joblib, python-dotenv
 #
 # WARNING: Test first with DRY_RUN = True
-
 
 import os
 import json
@@ -19,27 +18,31 @@ from websocket import WebSocketApp
 from binance.client import Client
 
 # ---------------------------------------------------------
-# LOAD ENVIRONMENT
+# LOAD ENVIRONMENT (.env stored on server)
 # ---------------------------------------------------------
 from dotenv import load_dotenv
 
-ENV_PATH = "/home/ubuntu/binance-bot/.env"
+ENV_PATH = "/opt/bot/.env"
 print(f"[DEBUG] Loading environment from: {ENV_PATH}")
-load_dotenv(ENV_PATH)
+
+if os.path.exists(ENV_PATH):
+    load_dotenv(ENV_PATH)
+else:
+    print(f"[ERROR] .env file NOT FOUND at {ENV_PATH}. Binance API keys missing!")
 
 # -----------------------
 # USER CONFIG
 # -----------------------
-API_KEY = os.getenv("BINANCE_KEY")
-API_SECRET = os.getenv("BINANCE_SECRET")
+API_KEY = os.getenv("BINANCE_API_KEY")
+API_SECRET = os.getenv("BINANCE_SECRET_KEY")
 
-print(f"[DEBUG] API_KEY loaded? {'YES' if API_KEY else 'NO'}")
-print(f"[DEBUG] API_SECRET loaded? {'YES' if API_SECRET else 'NO'}")
+print(f"[DEBUG] API_KEY loaded?: {'YES' if API_KEY else 'NO'}")
+print(f"[DEBUG] API_SECRET loaded?: {'YES' if API_SECRET else 'NO'}")
 
 if API_KEY:
-    print(f"[SECURITY] BINANCE_KEY: {API_KEY[:4]}********")
+    print(f"[SECURITY] BINANCE_API_KEY: {API_KEY[:4]}********")
 if API_SECRET:
-    print(f"[SECURITY] BINANCE_SECRET: {API_SECRET[:4]}********")
+    print(f"[SECURITY] BINANCE_SECRET_KEY: {API_SECRET[:4]}********")
 
 SYMBOL = "BTCUSDT"
 DRY_RUN = True
@@ -61,9 +64,10 @@ INPUT_BAR_MINUTES = 1
 BACKTEST_BAR_MINUTES = 3
 AGG_BARS = int(BACKTEST_BAR_MINUTES / INPUT_BAR_MINUTES)
 
-FEATURE_COLUMNS = ['close', 'ret1', 'bb_mtf', 'ema_diff',
-                   'kumo_top', 'kumo_bot', 'atr', 'rsi', 'hour', 'dow']
-
+FEATURE_COLUMNS = [
+    'close', 'ret1', 'bb_mtf', 'ema_diff',
+    'kumo_top', 'kumo_bot', 'atr', 'rsi', 'hour', 'dow'
+]
 
 # ---------------------------------------------------------
 # LOGGING
@@ -74,22 +78,19 @@ def log(msg):
     with open(LOGFILE, "a") as f:
         f.write(s + "\n")
 
-
 # ---------------------------------------------------------
 # BINANCE CLIENT
 # ---------------------------------------------------------
 print("[DEBUG] Initializing Binance client...")
 client = Client(API_KEY, API_SECRET)
 
-# Quick connectivity test
 try:
-    ping = client.ping()
+    client.ping()
     print("[DEBUG] Binance connectivity: OK")
 except Exception as e:
     print("[ERROR] Could NOT reach Binance API:", e)
-    print("Check VPS internet or firewall!")
+    print("Check internet connection!")
     time.sleep(2)
-
 
 # ---------------------------------------------------------
 # MODEL LOAD
@@ -106,7 +107,6 @@ try:
 except Exception as e:
     print("[FATAL] Error loading ML model:", e)
     raise SystemExit(1)
-
 
 # ---------------------------------------------------------
 # INDICATORS
@@ -125,7 +125,6 @@ def rolling_bbtrend(close_s, short_len, long_len, std=2.0):
 
     return ((s_low - l_low).abs() - (s_up - l_up).abs()) / denom * 100.0
 
-
 def compute_unshifted_kumo(df):
     high = df["high"]
     low = df["low"]
@@ -136,7 +135,6 @@ def compute_unshifted_kumo(df):
     kumoTop = pd.concat([senkouA, senkouB], axis=1).max(axis=1).ffill().fillna(0.0)
     kumoBot = pd.concat([senkouA, senkouB], axis=1).min(axis=1).ffill().fillna(0.0)
     return kumoTop, kumoBot
-
 
 def compute_atr(df, length=14):
     high = df["high"]
@@ -149,7 +147,6 @@ def compute_atr(df, length=14):
     ], axis=1).max(axis=1)
     return tr.rolling(length, min_periods=1).mean()
 
-
 def compute_rsi(close, length=14):
     delta = close.diff()
     gain = delta.clip(lower=0)
@@ -158,7 +155,6 @@ def compute_rsi(close, length=14):
     avg_loss = loss.rolling(length, min_periods=1).mean()
     rs = avg_gain / avg_loss.replace(0, 1e-10)
     return 100 - (100 / (1 + rs))
-
 
 # ---------------------------------------------------------
 # FEATURE GENERATOR
@@ -170,7 +166,6 @@ def build_features_from_df(df):
     close_30 = close.resample("30min").last().ffill()
 
     bb_mtf = rolling_bbtrend(close_30, BB_SHORT, BB_LONG, BB_STD).reindex(df.index, method="ffill")
-
     ema_htf = close.resample(EMA_TF).last().ffill().ewm(span=EMA_LEN).mean()
     ema_diff = close - ema_htf.reindex(df.index).ffill()
 
@@ -193,7 +188,6 @@ def build_features_from_df(df):
     print("[DEBUG] Features generated successfully.")
     return feat
 
-
 # ---------------------------------------------------------
 # ORDER EXECUTION
 # ---------------------------------------------------------
@@ -215,30 +209,25 @@ def place_market_order(symbol, side, qty):
         log(f"[ERROR] Order failed: {e}")
         return None
 
-
 # ---------------------------------------------------------
 # WEBSOCKET CALLBACKS
 # ---------------------------------------------------------
 def on_open(ws):
     log("[WS] WebSocket opened.")
 
-
 def on_close(ws, code, msg):
     log(f"[WS] WebSocket closed — code={code}, msg={msg}")
-    log("[WS] Attempting reconnection in 5 seconds...")
+    log("[WS] Reconnecting in 5 seconds...")
     time.sleep(5)
     start_kline_ws(SYMBOL)
 
-
 def on_error(ws, error):
     log(f"[WS ERROR] {error}")
-
 
 # ---------------------------------------------------------
 # MAIN KLINE HANDLER
 # ---------------------------------------------------------
 candles_1m = deque(maxlen=2000)
-
 
 def on_kline_message(msg):
     try:
@@ -269,10 +258,9 @@ def on_kline_message(msg):
             return
 
         df = pd.DataFrame(candles_1m).set_index("timestamp")
-
         feat = build_features_from_df(df)
-        last_index = feat.index[-1]
 
+        last_index = feat.index[-1]
         X = feat.loc[[last_index]].select_dtypes(include=[np.number]).fillna(0)
 
         try:
@@ -281,7 +269,6 @@ def on_kline_message(msg):
         except Exception as e:
             log(f"[ML ERROR] {e}")
             return
-
 
 # ---------------------------------------------------------
 # START WEBSOCKET
@@ -297,9 +284,7 @@ def start_kline_ws(symbol):
         on_error=on_error,
         on_close=on_close
     )
-
     ws.run_forever()
-
 
 # ---------------------------------------------------------
 # MAIN
@@ -320,7 +305,6 @@ def main():
         log("Bot manually stopped.")
     except Exception as e:
         log(f"[FATAL] Crash: {e}")
-
 
 if __name__ == "__main__":
     main()
