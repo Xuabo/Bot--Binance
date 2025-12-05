@@ -1,10 +1,10 @@
-# ============================================================
-# ultra_precision_realtime_bot_binance.py  (PARTE 1/3)
-# ============================================================
-# Python 3.8+
-# Suporta Testnet/Mainnet automaticamente via .env
-# Suporte multi-par, TP/SL reais, logs avançados
-# ============================================================
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+ultra_precision_realtime_bot_binance.py
+Full single-file bot (Testnet default). Copy-paste to /opt/bot/ultra_precision_realtime_bot_binance.py
+Requirements (inside venv): python-binance, websocket-client, numpy, pandas, joblib, python-dotenv, requests
+"""
 
 import os
 import json
@@ -17,26 +17,21 @@ from datetime import datetime
 import numpy as np
 import pandas as pd
 import joblib
+import requests
 
 from websocket import WebSocketApp
 from dotenv import load_dotenv
 
-# ------------------------------------------------------------
-# Attempt import python-binance
-# ------------------------------------------------------------
+# Try import python-binance
 try:
     from binance.client import Client
 except Exception as e:
     raise SystemExit(
         f"[FATAL] python-binance not found in venv.\n"
-        f"Install using:\n"
-        f"  /opt/bot/venv/bin/pip install python-binance\n"
-        f"Error: {e}"
+        f"Install using: /opt/bot/venv/bin/pip install python-binance\nError: {e}"
     )
 
-# ------------------------------------------------------------
-# LOAD .ENV
-# ------------------------------------------------------------
+# -------------------- LOAD .env --------------------
 ENV_PATH = "/opt/bot/.env"
 if not os.path.exists(ENV_PATH):
     print(f"[FATAL] .env not found at {ENV_PATH}")
@@ -44,24 +39,20 @@ if not os.path.exists(ENV_PATH):
 
 load_dotenv(ENV_PATH)
 
-# Mode
-USE_TESTNET = os.getenv("USE_TESTNET", "False").lower() == "true"
-DRY_RUN = os.getenv("DRY_RUN", "True").lower() == "true"
+# Modes & keys
+USE_TESTNET = os.getenv("USE_TESTNET", "True").lower() == "true"   # default True (safe)
+DRY_RUN = os.getenv("DRY_RUN", "True").lower() == "true"          # don't send real orders by default
 
-# API keys
-TESTNET_API_KEY = os.getenv("TESTNET_API_KEY", "")
-TESTNET_SECRET_KEY = os.getenv("TESTNET_SECRET_KEY", "")
-MAINNET_API_KEY = os.getenv("MAINNET_API_KEY", "")
-MAINNET_SECRET_KEY = os.getenv("MAINNET_SECRET_KEY", "")
+TESTNET_API_KEY = os.getenv("TESTNET_API_KEY", "").strip()
+TESTNET_SECRET_KEY = os.getenv("TESTNET_SECRET_KEY", "").strip()
+MAINNET_API_KEY = os.getenv("MAINNET_API_KEY", "").strip()
+MAINNET_SECRET_KEY = os.getenv("MAINNET_SECRET_KEY", "").strip()
 
-# Symbols list from .env
-SYMBOLS = os.getenv("SYMBOLS", "BTCUSDT").split(",")
-
-# Files
+# Config from env with safe defaults
+SYMBOLS = [s.strip().upper() for s in os.getenv("SYMBOLS", "BTCUSDT").split(",") if s.strip()]
 MODEL_FILE = os.getenv("MODEL_FILE", "model.joblib")
 LOGFILE = os.getenv("LOGFILE", "/opt/bot/ultra_precision_bot.log")
 
-# Strategy settings
 LEVERAGE = float(os.getenv("LEVERAGE", 10))
 TRADE_PCT = float(os.getenv("TRADE_PCT", 0.05))
 PROB_THRESHOLD = float(os.getenv("PROB_THRESHOLD", 0.60))
@@ -69,27 +60,21 @@ TP = float(os.getenv("TP", 0.02))
 SL = float(os.getenv("SL", 0.008))
 COOLDOWN_MIN = int(os.getenv("COOLDOWN_MIN", 5))
 
-# Indicator settings
 BB_SHORT = int(os.getenv("BB_SHORT", 14))
 BB_LONG = int(os.getenv("BB_LONG", 40))
 BB_STD = float(os.getenv("BB_STD", 2.0))
 EMA_TF = os.getenv("EMA_TF", "30min")
 EMA_LEN = int(os.getenv("EMA_LEN", 200))
 
-# Trading time filters
-ULTRA_HOURS = [int(x) for x in os.getenv("ULTRA_HOURS", "9,13,14,15,16,17,19").split(",")]
-ULTRA_DAYS = [int(x) for x in os.getenv("ULTRA_DAYS", "0,1,2,3,4").split(",")]
+ULTRA_HOURS = [int(x) for x in os.getenv("ULTRA_HOURS", "9,13,14,15,16,17,19").split(",") if x.strip()!=""]
+ULTRA_DAYS = [int(x) for x in os.getenv("ULTRA_DAYS", "0,1,2,3,4").split(",") if x.strip()!=""]
 
-# Candle settings
 INPUT_BAR_MINUTES = int(os.getenv("INPUT_BAR_MINUTES", 1))
 BACKTEST_BAR_MINUTES = int(os.getenv("BACKTEST_BAR_MINUTES", 3))
-AGG_BARS = int(BACKTEST_BAR_MINUTES / INPUT_BAR_MINUTES)
+AGG_BARS = max(1, int(BACKTEST_BAR_MINUTES / INPUT_BAR_MINUTES))
 CANDLES_BUFFER_MAX = int(os.getenv("CANDLES_BUFFER_MAX", 2000))
 
-
-# ------------------------------------------------------------
-# LOGGING
-# ------------------------------------------------------------
+# -------------------- LOGGING --------------------
 def log(msg):
     s = f"[{datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}] {msg}"
     print(s)
@@ -99,10 +84,7 @@ def log(msg):
     except Exception:
         pass
 
-
-# ------------------------------------------------------------
-# SELECT API KEYS BASED ON TESTNET OR MAINNET
-# ------------------------------------------------------------
+# -------------------- CHOOSE API KEYS --------------------
 if USE_TESTNET:
     API_KEY = TESTNET_API_KEY
     API_SECRET = TESTNET_SECRET_KEY
@@ -111,59 +93,46 @@ else:
     API_SECRET = MAINNET_SECRET_KEY
 
 if not API_KEY or not API_SECRET:
-    log("[FATAL] Missing API keys. Configure .env properly.")
+    log("[FATAL] API keys missing for the selected environment. Check /opt/bot/.env")
     raise SystemExit(1)
 
+log(f"[INFO] USE_TESTNET={USE_TESTNET} DRY_RUN={DRY_RUN} SYMBOLS={SYMBOLS}")
 
-# ------------------------------------------------------------
-# INITIALIZE BINANCE CLIENT
-# ------------------------------------------------------------
-log(f"[INFO] USE_TESTNET={USE_TESTNET} | DRY_RUN={DRY_RUN}")
-
+# -------------------- INIT BINANCE CLIENT --------------------
 client = Client(API_KEY, API_SECRET)
 
-# Adjust python-binance base URLs for TESTNET
+# Best-effort: adjust python-binance urls for futures testnet
 if USE_TESTNET:
     try:
+        # some python-binance versions allow changing base URLs
         client.API_URL = "https://testnet.binancefuture.com"
         client.FUTURES_URL = "https://testnet.binancefuture.com"
-        log("[INFO] Switched client to Binance FUTURES TESTNET.")
+        log("[INFO] Attempted to set client to Binance Futures TESTNET endpoints.")
     except Exception as e:
-        log(f"[WARN] Could not adjust URLs for testnet: {e}")
+        log(f"[WARN] Could not change client base URLs: {e}")
 
-# Connection check
+# Quick connectivity check
 try:
     client.ping()
-    log("[DEBUG] Binance ping OK.")
+    log("[DEBUG] Binance ping OK")
 except Exception as e:
     log(f"[WARN] Binance ping failed (may still work): {e}")
 
-
-# ------------------------------------------------------------
-# LOAD ML MODEL
-# ------------------------------------------------------------
+# -------------------- LOAD MODEL --------------------
 if not os.path.exists(MODEL_FILE):
-    log(f"[FATAL] ML model not found: {MODEL_FILE}")
+    log(f"[FATAL] Model file not found: {MODEL_FILE}")
     raise SystemExit(1)
 
 try:
     model = joblib.load(MODEL_FILE)
     log("[DEBUG] ML model loaded successfully.")
 except Exception as e:
-    log(f"[FATAL] Could not load model: {e}")
+    log(f"[FATAL] Could not load ML model: {e}")
     raise SystemExit(1)
-# ============================================================
-# ultra_precision_realtime_bot_binance.py  (PARTE 2/3)
-# ============================================================
 
-# ----------------------------
-# INDICATORS & FEATURE BUILDER
-# ----------------------------
+# If the model was created with newer scikit-learn, warn (already printed by sklearn)
+# -------------------- INDICATORS & FEATURES --------------------
 def rolling_bbtrend(close_s, short_len, long_len, std=2.0):
-    """
-    Compute a normalized difference between short and long Bollinger bands (multi-timeframe).
-    Returns a series aligned with close_s index.
-    """
     try:
         s_mean = close_s.rolling(short_len, min_periods=1).mean()
         s_std = close_s.rolling(short_len, min_periods=1).std().fillna(0.0)
@@ -175,32 +144,24 @@ def rolling_bbtrend(close_s, short_len, long_len, std=2.0):
         l_low = l_mean - std * l_std
         l_up = l_mean + std * l_std
         denom = s_mean.replace(0, 1e-10)
-
         return ((s_low - l_low).abs() - (s_up - l_up).abs()) / denom * 100.0
     except Exception as e:
         log(f"[INDICATOR] rolling_bbtrend error: {e}")
         return pd.Series(0.0, index=close_s.index)
 
-
 def compute_unshifted_kumo(df):
-    """
-    Compute ichimoku kumo top / bot without shifting (useful as features).
-    """
     try:
-        high = df["high"]
-        low = df["low"]
-        tenkan = (high.rolling(9).max() + low.rolling(9).min()) / 2
-        kijun = (high.rolling(26).max() + low.rolling(26).min()) / 2
-        senkouA = (tenkan + kijun) / 2
-        senkouB = (high.rolling(52).max() + low.rolling(52).min()) / 2
+        high = df["high"]; low = df["low"]
+        tenkan = (high.rolling(9).max() + low.rolling(9).min())/2
+        kijun = (high.rolling(26).max() + low.rolling(26).min())/2
+        senkouA = (tenkan + kijun)/2
+        senkouB = (high.rolling(52).max() + low.rolling(52).min())/2
         kumoTop = pd.concat([senkouA, senkouB], axis=1).max(axis=1).ffill().fillna(0.0)
         kumoBot = pd.concat([senkouA, senkouB], axis=1).min(axis=1).ffill().fillna(0.0)
         return kumoTop, kumoBot
     except Exception as e:
         log(f"[INDICATOR] compute_unshifted_kumo error: {e}")
-        idx = df.index
-        return pd.Series(0.0, index=idx), pd.Series(0.0, index=idx)
-
+        return pd.Series(0.0, index=df.index), pd.Series(0.0, index=df.index)
 
 def compute_atr(df, length=14):
     try:
@@ -215,7 +176,6 @@ def compute_atr(df, length=14):
         log(f"[INDICATOR] compute_atr error: {e}")
         return pd.Series(0.0, index=df.index)
 
-
 def compute_rsi(close, length=14):
     try:
         delta = close.diff()
@@ -229,67 +189,73 @@ def compute_rsi(close, length=14):
         log(f"[INDICATOR] compute_rsi error: {e}")
         return pd.Series(50.0, index=close.index)
 
-
 def build_features_from_df(df):
+    log("[DEBUG] Building features...")
+    close = df["close"]
+    close_30 = close.resample("30min").last().ffill()
+    bb_mtf = rolling_bbtrend(close_30, BB_SHORT, BB_LONG, BB_STD).reindex(df.index, method="ffill")
+    ema_htf = close.resample(EMA_TF).last().ffill().ewm(span=EMA_LEN).mean()
+    ema_diff = close - ema_htf.reindex(df.index).ffill()
+    kumoTop, kumoBot = compute_unshifted_kumo(df)
+    atr = compute_atr(df)
+    rsi = compute_rsi(close)
+    feat = pd.DataFrame(index=df.index)
+    feat["close"] = close
+    feat["ret1"] = close.pct_change().fillna(0)
+    feat["bb_mtf"] = bb_mtf.fillna(0)
+    feat["ema_diff"] = ema_diff.fillna(0)
+    feat["kumo_top"] = kumoTop
+    feat["kumo_bot"] = kumoBot
+    feat["atr"] = atr
+    feat["rsi"] = rsi
+    feat["hour"] = feat.index.hour
+    feat["dow"] = feat.index.dayofweek
+    log("[DEBUG] Features generated successfully.")
+    return feat
+
+# -------------------- UTILITIES: exchange info fallback --------------------
+def _futures_exchange_info_fallback_testnet():
     """
-    Build features expected by the ML model from 1m dataframe with index==timestamp.
+    Best-effort fallback to fetch exchangeInfo from testnet REST endpoint if python-binance fails.
     """
     try:
-        log("[DEBUG] Building features...")
-        close = df["close"]
-        # HTF resample for 30min
-        close_30 = close.resample("30min").last().ffill()
-
-        bb_mtf = rolling_bbtrend(close_30, BB_SHORT, BB_LONG, BB_STD).reindex(df.index, method="ffill")
-        ema_htf = close.resample(EMA_TF).last().ffill().ewm(span=EMA_LEN).mean()
-        ema_diff = close - ema_htf.reindex(df.index).ffill()
-
-        kumoTop, kumoBot = compute_unshifted_kumo(df)
-        atr = compute_atr(df)
-        rsi = compute_rsi(close)
-
-        feat = pd.DataFrame(index=df.index)
-        feat["close"] = close
-        feat["ret1"] = close.pct_change().fillna(0)
-        feat["bb_mtf"] = bb_mtf.fillna(0)
-        feat["ema_diff"] = ema_diff.fillna(0)
-        feat["kumo_top"] = kumoTop
-        feat["kumo_bot"] = kumoBot
-        feat["atr"] = atr
-        feat["rsi"] = rsi
-        feat["hour"] = feat.index.hour
-        feat["dow"] = feat.index.dayofweek
-
-        log("[DEBUG] Features generated successfully.")
-        return feat
+        url = "https://testnet.binancefuture.com/fapi/v1/exchangeInfo"
+        r = requests.get(url, timeout=5)
+        if r.status_code == 200:
+            return r.json()
     except Exception as e:
-        log(f"[FEATURE] build_features_from_df failed: {e}")
-        raise
+        log(f"[WARN] testnet exchangeInfo fallback failed: {e}")
+    return None
 
-
-# ----------------------------
-# UTILITIES: Exchange info & qty calc
-# ----------------------------
 def get_symbol_info(symbol):
     """
-    Return exchange symbol info for futures (LOT_SIZE filter etc)
+    Try client.futures_exchange_info(); if response structure unexpected, try fallback for testnet.
     """
     try:
         info = client.futures_exchange_info()
-        for s in info.get("symbols", []):
-            if s.get("symbol") == symbol:
-                return s
+        # ensure it looks like expected
+        if isinstance(info, dict) and "symbols" in info:
+            for s in info.get("symbols", []):
+                if s.get("symbol") == symbol:
+                    return s
+        else:
+            log("[WARN] futures_exchange_info returned unexpected structure; trying fallback.")
     except Exception as e:
-        log(f"[ERROR] get_symbol_info: {e}")
+        log(f"[WARN] futures_exchange_info error: {e}")
+
+    # fallback for testnet
+    if USE_TESTNET:
+        info = _futures_exchange_info_fallback_testnet()
+        if info and isinstance(info, dict) and "symbols" in info:
+            for s in info.get("symbols", []):
+                if s.get("symbol") == symbol:
+                    return s
+        else:
+            log("[WARN] fallback testnet exchangeInfo didn't return expected 'symbols' key")
     return None
 
-
 def qty_from_pct_balance(symbol, pct, leverage):
-    """
-    Compute quantity for futures given pct of USDT balance (cross wallet),
-    using current mark price and leverage. Respects stepSize/minQty if available.
-    Returns float qty (0.0 if too small).
-    """
+    # compute usable qty for futures with step size
     try:
         bal = client.futures_account_balance()
         usdt_bal = 0.0
@@ -299,7 +265,7 @@ def qty_from_pct_balance(symbol, pct, leverage):
                 break
     except Exception as e:
         log(f"[WARN] Error fetching balance: {e}")
-        usdt_bal = 100.0  # sensible fallback for testing
+        usdt_bal = 100.0  # fallback for safety in tests
 
     try:
         price = float(client.futures_mark_price(symbol=symbol)["markPrice"])
@@ -331,27 +297,18 @@ def qty_from_pct_balance(symbol, pct, leverage):
     else:
         return max(math.floor(raw_qty * 1e6) / 1e6, 0.0)
 
-
-# ----------------------------
-# PROBABILITY EXTRACTION (robust)
-# ----------------------------
+# -------------------- PROB EXTRACTION --------------------
 def extract_probs_from_model_output(model, proba_array):
-    """
-    Robustly map model.classes_ and predict_proba output to (long_prob, short_prob).
-    Handles classes like [1, -1], [0,1], strings, numpy types, etc.
-    """
     long_prob = 0.0
     short_prob = 0.0
     try:
         classes = list(model.classes_)
         for c, p in zip(classes, proba_array):
             try:
-                # coerce class to int if possible
                 if isinstance(c, (list, tuple, np.ndarray)):
                     c2 = c[0]
                 else:
                     c2 = c
-                # pandas/numpy scalars
                 if hasattr(c2, "item"):
                     c2 = c2.item()
                 ic = int(float(c2))
@@ -362,12 +319,9 @@ def extract_probs_from_model_output(model, proba_array):
             elif ic == -1:
                 short_prob = float(p)
             elif ic == 0:
-                # interpret 0 as short in some encodings
                 short_prob = float(p)
     except Exception as e:
         log(f"[PROB] extract_probs error: {e}")
-
-    # fallback when nothing extracted
     if long_prob == 0.0 and short_prob == 0.0 and len(proba_array) == 2:
         try:
             short_prob = float(proba_array[0])
@@ -376,23 +330,14 @@ def extract_probs_from_model_output(model, proba_array):
             pass
     return long_prob, short_prob
 
-
-# ----------------------------
-# ORDER EXECUTION (safe)
-# ----------------------------
+# -------------------- ORDERS --------------------
 def place_market_order(symbol, side, qty, reduce_only=False):
-    """
-    Place market order on futures. In DRY_RUN mode just log.
-    Returns response dict or None.
-    """
     if qty is None or qty <= 0:
         log(f"[ORDER] {symbol} qty invalid ({qty}) - skipping")
         return None
-
     if DRY_RUN:
         log(f"[DRY_RUN] Would execute MARKET {side} {symbol} qty={qty}")
         return {"orderId": 0, "status": "DRY"}
-
     try:
         res = client.futures_create_order(
             symbol=symbol,
@@ -407,25 +352,120 @@ def place_market_order(symbol, side, qty, reduce_only=False):
         log(f"[ERROR] Order failed for {symbol}: {e}")
         return None
 
-
-# ----------------------------
-# PER-SYMBOL STATE
-# ----------------------------
-# Keep buffers and states per-symbol to allow multi-par operation
-candles_map = {s.strip(): deque(maxlen=CANDLES_BUFFER_MAX) for s in SYMBOLS}
-last_trade_time = {s.strip(): None for s in SYMBOLS}
-in_position = {s.strip(): False for s in SYMBOLS}
-current_position = {s.strip(): None for s in SYMBOLS}
+# -------------------- PER-SYMBOL STATE --------------------
+candles_map = {s: deque(maxlen=CANDLES_BUFFER_MAX) for s in SYMBOLS}
+last_trade_time = {s: None for s in SYMBOLS}
+in_position = {s: False for s in SYMBOLS}
+current_position = {s: None for s in SYMBOLS}
 state_lock = threading.Lock()
+log(f"[STATE] per-symbol state initialized for: {', '.join(SYMBOLS)}")
 
-log(f"[STATE] Initialized per-symbol state for: {', '.join(list(candles_map.keys()))}")
-# ============================================================
-# ultra_precision_realtime_bot_binance.py  (PARTE 3/3)
-# ============================================================
+# -------------------- WEBSOCKET HANDLERS FACTORY --------------------
+def on_kline_message_factory(symbol):
+    """
+    Returns a handler function bound to 'symbol' that processes incoming kline messages.
+    """
+    def on_kline_message(msg):
+        try:
+            data = json.loads(msg)
+        except Exception:
+            return
+        if not isinstance(data, dict) or "k" not in data:
+            return
+        k = data["k"]
+        is_candle_closed = k.get("x", False)
+        candle = {
+            "timestamp": pd.to_datetime(k["t"], unit="ms", utc=True),
+            "open": float(k["o"]),
+            "high": float(k["h"]),
+            "low": float(k["l"]),
+            "close": float(k["c"]),
+            "volume": float(k["v"])
+        }
+        if is_candle_closed:
+            candles_map[symbol].append(candle)
+            log(f"[DEBUG {symbol}] 1m candle closed.")
+            if len(candles_map[symbol]) < AGG_BARS:
+                return
+            df1m = pd.DataFrame(list(candles_map[symbol])[-1000:]).set_index("timestamp")
+            try:
+                feat = build_features_from_df(df1m)
+            except Exception as e:
+                log(f"[ERROR {symbol}] Feature build error: {e}")
+                return
+            t_index = feat.index[-1]
+            X = feat.loc[[t_index]].select_dtypes(include=[np.number]).fillna(0)
+            try:
+                proba = model.predict_proba(X)[0]
+                long_prob, short_prob = extract_probs_from_model_output(model, proba)
+                log(f"[PREDICT {symbol}] long_prob={long_prob:.3f} short_prob={short_prob:.3f}")
+            except Exception as e:
+                log(f"[ML ERROR {symbol}] {e}")
+                return
+            # Time filter
+            try:
+                hour = int(feat["hour"].iloc[-1]); dow = int(feat["dow"].iloc[-1])
+            except Exception as e:
+                log(f"[WS ERROR {symbol}] time extraction failed: {e}")
+                return
+            if hour not in ULTRA_HOURS or dow not in ULTRA_DAYS:
+                log(f"[FILTER {symbol}] Outside trading hours. skip.")
+                return
+            now = pd.Timestamp.utcnow()
+            if last_trade_time[symbol] is not None and (now - last_trade_time[symbol]) < pd.Timedelta(minutes=COOLDOWN_MIN):
+                log(f"[{symbol}] In cooldown.")
+            entry_price = candle["close"]
+            # Try open
+            if not in_position[symbol]:
+                if long_prob >= PROB_THRESHOLD:
+                    qty = qty_from_pct_balance(symbol, TRADE_PCT, LEVERAGE)
+                    if qty <= 0:
+                        log(f"[{symbol}] Computed qty <= 0; skipping")
+                    else:
+                        res = place_market_order(symbol, "BUY", qty)
+                        if res is not None:
+                            in_position[symbol] = True
+                            current_position[symbol] = {"side": "LONG", "entry_price": float(entry_price), "qty": qty, "entry_time": t_index}
+                            last_trade_time[symbol] = pd.Timestamp.utcnow()
+                            log(f"[{symbol}] Entered LONG: {current_position[symbol]}")
+                elif short_prob >= PROB_THRESHOLD:
+                    qty = qty_from_pct_balance(symbol, TRADE_PCT, LEVERAGE)
+                    if qty <= 0:
+                        log(f"[{symbol}] Computed qty <= 0; skipping")
+                    else:
+                        res = place_market_order(symbol, "SELL", qty)
+                        if res is not None:
+                            in_position[symbol] = True
+                            current_position[symbol] = {"side": "SHORT", "entry_price": float(entry_price), "qty": qty, "entry_time": t_index}
+                            last_trade_time[symbol] = pd.Timestamp.utcnow()
+                            log(f"[{symbol}] Entered SHORT: {current_position[symbol]}")
+            # If in position check TP/SL using intrabar high/low
+            if in_position[symbol] and current_position[symbol] is not None:
+                hi = candle["high"]; lo = candle["low"]
+                entry = current_position[symbol]["entry_price"]; qty = current_position[symbol]["qty"]; side = current_position[symbol]["side"]
+                if side == "LONG":
+                    tp_price = entry * (1 + TP); sl_price = entry * (1 - SL)
+                    if hi >= tp_price:
+                        res = place_market_order(symbol, "SELL", qty)
+                        log(f"[{symbol}] LONG TP hit. closed. res={res}")
+                        in_position[symbol] = False; current_position[symbol] = None; last_trade_time[symbol] = pd.Timestamp.utcnow()
+                    elif lo <= sl_price:
+                        res = place_market_order(symbol, "SELL", qty)
+                        log(f"[{symbol}] LONG SL hit. closed. res={res}")
+                        in_position[symbol] = False; current_position[symbol] = None; last_trade_time[symbol] = pd.Timestamp.utcnow()
+                else:
+                    tp_price = entry * (1 - TP); sl_price = entry * (1 + SL)
+                    if lo <= tp_price:
+                        res = place_market_order(symbol, "BUY", qty)
+                        log(f"[{symbol}] SHORT TP hit. closed. res={res}")
+                        in_position[symbol] = False; current_position[symbol] = None; last_trade_time[symbol] = pd.Timestamp.utcnow()
+                    elif hi >= sl_price:
+                        res = place_market_order(symbol, "BUY", qty)
+                        log(f"[{symbol}] SHORT SL hit. closed. res={res}")
+                        in_position[symbol] = False; current_position[symbol] = None; last_trade_time[symbol] = pd.Timestamp.utcnow()
+    return on_kline_message
 
-# ----------------------------
-# WEBSOCKET: per-symbol handlers (factory already in PART 2)
-# ----------------------------
+# -------------------- WEBSOCKET START + CALLBACKS --------------------
 def on_open(ws, symbol):
     log(f"[WS {symbol}] opened.")
 
@@ -441,21 +481,15 @@ def on_close(ws, code, msg, symbol):
 def on_error(ws, error, symbol):
     log(f"[WS {symbol}] error: {error}")
 
-# ----------------------------
-# START WEBSOCKET (per symbol)
-# ----------------------------
 def start_kline_ws(symbol):
     symbol = symbol.strip().upper()
-    # choose stream base depending on testnet/mainnet
     if USE_TESTNET:
-        # testnet futures streaming endpoint (best-effort)
         stream = f"wss://stream.binancefuture.com/ws/{symbol.lower()}@kline_1m"
     else:
         stream = f"wss://fstream.binance.com/ws/{symbol.lower()}@kline_1m"
 
     log(f"[WS {symbol}] Connecting to {stream}")
     handler = on_kline_message_factory(symbol)
-
     ws = WebSocketApp(
         stream,
         on_open=lambda ws: on_open(ws, symbol),
@@ -463,8 +497,7 @@ def start_kline_ws(symbol):
         on_error=lambda ws, err: on_error(ws, err, symbol),
         on_close=lambda ws, code, msg: on_close(ws, code, msg, symbol)
     )
-
-    # run forever with simple retry loop
+    # keep trying
     while True:
         try:
             ws.run_forever()
@@ -473,43 +506,24 @@ def start_kline_ws(symbol):
         log(f"[WS {symbol}] Sleeping 3s before reconnect...")
         time.sleep(3)
 
-
-# ----------------------------
-# HEALTH CHECK helpers (optional)
-# ----------------------------
+# -------------------- HEALTH REPORT --------------------
 def health_report():
-    """
-    Return a short diagnostic summary useful to print in logs or use in an external health-check.
-    """
     try:
-        threads = threading.enumerate()
-        thread_count = len(threads)
-        sockets = []
-        try:
-            # best-effort: count non-daemon threads beyond main
-            pass
-        except Exception:
-            pass
-        active_symbols = [s for s, d in candles_map.items()]
+        thread_count = len(threading.enumerate())
         report = {
             "timestamp": datetime.utcnow().isoformat() + "Z",
-            "symbols": active_symbols,
+            "symbols": SYMBOLS,
             "threads": thread_count,
-            "in_position": {s: in_position.get(s) for s in active_symbols}
+            "in_position": {s: in_position.get(s) for s in SYMBOLS}
         }
         return report
     except Exception as e:
         return {"error": str(e)}
 
-
-# ----------------------------
-# MAIN
-# ----------------------------
+# -------------------- MAIN --------------------
 def main():
     log("=== Starting multi-pair ultra_precision bot (final) ===")
     log(f"CONFIG -> USE_TESTNET={USE_TESTNET} DRY_RUN={DRY_RUN} SYMBOLS={SYMBOLS}")
-
-    # start one websocket thread per symbol
     started = []
     for sym in SYMBOLS:
         s = sym.strip().upper()
@@ -519,12 +533,9 @@ def main():
         t.start()
         started.append(s)
         log(f"Thread started for {s}")
-
     log(f"All threads started: {', '.join(started)}")
-    # main loop: periodic health log
     try:
         while True:
-            # every 60s print lightweight health
             time.sleep(60)
             report = health_report()
             log(f"[HEALTH] {report}")
