@@ -8,6 +8,7 @@ import os
 import json
 import time
 import math
+import threading
 from collections import deque
 from datetime import datetime
 import numpy as np
@@ -315,7 +316,7 @@ def on_close(ws, code, msg):
     log(f"[WS] WebSocket closed — code={code}, msg={msg}")
     log("[WS] Reconnecting in 5 seconds...")
     time.sleep(5)
-    start_kline_ws(SYMBOL)
+    # try to reconnect all streams (main loop will re-open threads if needed)
 
 
 def on_error(ws, error):
@@ -381,9 +382,14 @@ def on_kline_message(msg):
             log(f"[ML ERROR] {e}")
             return
 
-        # Time filter
-        hour = int(feat.loc[t_index,'hour'])
-        dow = int(feat.loc[t_index,'dow'])
+        # Time filter - ensure scalars
+        try:
+            hour = int(feat['hour'].iloc[-1])
+            dow = int(feat['dow'].iloc[-1])
+        except Exception as e:
+            log(f"[WS ERROR] time extraction failed: {e}")
+            return
+
         if hour not in ULTRA_HOURS or dow not in ULTRA_DAYS:
             log("[FILTER] Outside allowed trading hours/days. Skipping.")
             return
