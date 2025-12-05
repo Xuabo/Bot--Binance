@@ -49,7 +49,7 @@ DRY_RUN = True
 LEVERAGE = 10
 PROB_THRESHOLD = 0.60
 MODEL_FILE = "model.joblib"
-LOGFILE = "ultra_precision_bot.log"
+LOGFILE = "/opt/bot/ultra_precision_bot.log"
 
 BB_SHORT = 14
 BB_LONG = 40
@@ -308,3 +308,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
